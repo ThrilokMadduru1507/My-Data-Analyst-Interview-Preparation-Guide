@@ -1,0 +1,671 @@
+# Advanced SQL Interview Preparation Guide
+## Groups, Joins, and Window Functions
+
+---
+
+## Table of Contents
+1. [Sample Database Schema](#sample-database-schema)
+2. [Advanced GROUP BY Questions](#advanced-group-by-questions)
+3. [Complex JOIN Questions](#complex-join-questions)
+4. [Window Functions Questions](#window-functions-questions)
+5. [Combined Advanced Questions](#combined-advanced-questions)
+6. [Tips and Common Patterns](#tips-and-common-patterns)
+
+---
+
+## Sample Database Schema
+
+We'll use these tables for our examples:
+
+```sql
+-- Employees table
+employees (employee_id, name, department_id, manager_id, salary, hire_date)
+
+-- Departments table
+departments (department_id, department_name, location)
+
+-- Sales table
+sales (sale_id, employee_id, product_id, sale_date, amount, quantity)
+
+-- Products table
+products (product_id, product_name, category, price)
+
+-- Orders table
+orders (order_id, customer_id, order_date, total_amount, status)
+
+-- Order_items table
+order_items (order_item_id, order_id, product_id, quantity, price)
+
+-- Customers table
+customers (customer_id, customer_name, city, join_date)
+```
+
+---
+
+## Advanced GROUP BY Questions
+
+### Question 1: Find departments with above-average salaries
+**Problem:** Find all departments where the average salary is higher than the company-wide average salary.
+
+```sql
+SELECT 
+    d.department_name,
+    AVG(e.salary) as avg_dept_salary
+FROM employees e
+JOIN departments d ON e.department_id = d.department_id
+GROUP BY d.department_id, d.department_name
+HAVING AVG(e.salary) > (SELECT AVG(salary) FROM employees);
+```
+
+**Key Concept:** Using HAVING with subquery to filter aggregated results.
+
+---
+
+### Question 2: Consecutive active months
+**Problem:** Find customers who made purchases in at least 3 consecutive months.
+
+```sql
+WITH monthly_purchases AS (
+    SELECT 
+        customer_id,
+        DATE_TRUNC('month', order_date) as purchase_month,
+        ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY DATE_TRUNC('month', order_date)) as rn
+    FROM orders
+    GROUP BY customer_id, DATE_TRUNC('month', order_date)
+),
+streak_calc AS (
+    SELECT 
+        customer_id,
+        purchase_month,
+        DATE_SUB(purchase_month, INTERVAL rn MONTH) as streak_group
+    FROM monthly_purchases
+)
+SELECT 
+    customer_id,
+    COUNT(*) as consecutive_months,
+    MIN(purchase_month) as streak_start,
+    MAX(purchase_month) as streak_end
+FROM streak_calc
+GROUP BY customer_id, streak_group
+HAVING COUNT(*) >= 3;
+```
+
+**Key Concept:** Using window functions with GROUP BY to detect consecutive sequences.
+
+---
+
+### Question 3: Moving average with grouping
+**Problem:** Calculate 3-month moving average of sales for each product category.
+
+```sql
+SELECT 
+    p.category,
+    DATE_TRUNC('month', s.sale_date) as month,
+    SUM(s.amount) as monthly_sales,
+    AVG(SUM(s.amount)) OVER (
+        PARTITION BY p.category 
+        ORDER BY DATE_TRUNC('month', s.sale_date)
+        ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+    ) as moving_avg_3months
+FROM sales s
+JOIN products p ON s.product_id = p.product_id
+GROUP BY p.category, DATE_TRUNC('month', s.sale_date)
+ORDER BY p.category, month;
+```
+
+**Key Concept:** Combining GROUP BY with window functions for moving calculations.
+
+---
+
+## Complex JOIN Questions
+
+### Question 4: Self-join to find employee hierarchies
+**Problem:** Find all employees and their complete management chain up to the CEO.
+
+```sql
+WITH RECURSIVE management_chain AS (
+    -- Base case: all employees
+    SELECT 
+        employee_id,
+        name,
+        manager_id,
+        name as chain,
+        1 as level
+    FROM employees
+    WHERE manager_id IS NULL  -- CEO
+    
+    UNION ALL
+    
+    -- Recursive case
+    SELECT 
+        e.employee_id,
+        e.name,
+        e.manager_id,
+        mc.chain || ' -> ' || e.name as chain,
+        mc.level + 1
+    FROM employees e
+    JOIN management_chain mc ON e.manager_id = mc.employee_id
+)
+SELECT * FROM management_chain
+ORDER BY level, chain;
+```
+
+**Key Concept:** Recursive CTEs for hierarchical data.
+
+---
+
+### Question 5: Find gaps in sequences
+**Problem:** Find missing order IDs in the orders table.
+
+```sql
+WITH order_range AS (
+    SELECT 
+        MIN(order_id) as min_id,
+        MAX(order_id) as max_id
+    FROM orders
+),
+all_ids AS (
+    SELECT 
+        generate_series(min_id, max_id) as expected_id
+    FROM order_range
+)
+SELECT a.expected_id as missing_order_id
+FROM all_ids a
+LEFT JOIN orders o ON a.expected_id = o.order_id
+WHERE o.order_id IS NULL;
+```
+
+**Key Concept:** Using LEFT JOIN to find missing values.
+
+---
+
+### Question 6: Complex multi-table join with aggregation
+**Problem:** Find products that have been sold in all cities where we have customers.
+
+```sql
+WITH cities AS (
+    SELECT DISTINCT city FROM customers
+),
+product_cities AS (
+    SELECT DISTINCT 
+        p.product_id,
+        p.product_name,
+        c.city
+    FROM sales s
+    JOIN products p ON s.product_id = p.product_id
+    JOIN orders o ON s.sale_id = o.order_id  -- assuming sales linked to orders
+    JOIN customers c ON o.customer_id = c.customer_id
+)
+SELECT 
+    product_id,
+    product_name
+FROM product_cities
+GROUP BY product_id, product_name
+HAVING COUNT(DISTINCT city) = (SELECT COUNT(DISTINCT city) FROM customers);
+```
+
+**Key Concept:** Division operation in SQL - finding items that match ALL conditions.
+
+---
+
+## Window Functions Questions
+
+### Question 7: Running total with reset
+**Problem:** Calculate running total of sales for each employee, resetting at the start of each year.
+
+```sql
+SELECT 
+    employee_id,
+    sale_date,
+    amount,
+    SUM(amount) OVER (
+        PARTITION BY employee_id, EXTRACT(YEAR FROM sale_date)
+        ORDER BY sale_date
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) as year_running_total
+FROM sales
+ORDER BY employee_id, sale_date;
+```
+
+**Key Concept:** Using PARTITION BY with multiple columns for conditional resets.
+
+---
+
+### Question 8: Percentile and ranking
+**Problem:** Find employees in the top 10% of earners in each department.
+
+```sql
+SELECT 
+    employee_id,
+    name,
+    department_id,
+    salary,
+    PERCENT_RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) as percentile_rank
+FROM employees
+QUALIFY PERCENT_RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) <= 0.1;
+
+-- Alternative without QUALIFY:
+WITH ranked_employees AS (
+    SELECT 
+        employee_id,
+        name,
+        department_id,
+        salary,
+        PERCENT_RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) as percentile_rank
+    FROM employees
+)
+SELECT *
+FROM ranked_employees
+WHERE percentile_rank <= 0.1;
+```
+
+**Key Concept:** PERCENT_RANK() for percentile calculations.
+
+---
+
+### Question 9: LAG/LEAD for comparison
+**Problem:** Find the growth rate of monthly sales compared to the previous month.
+
+```sql
+WITH monthly_sales AS (
+    SELECT 
+        DATE_TRUNC('month', sale_date) as month,
+        SUM(amount) as total_sales
+    FROM sales
+    GROUP BY DATE_TRUNC('month', sale_date)
+)
+SELECT 
+    month,
+    total_sales,
+    LAG(total_sales) OVER (ORDER BY month) as prev_month_sales,
+    ROUND(
+        ((total_sales - LAG(total_sales) OVER (ORDER BY month)) / 
+         LAG(total_sales) OVER (ORDER BY month) * 100), 2
+    ) as growth_rate_pct
+FROM monthly_sales
+ORDER BY month;
+```
+
+**Key Concept:** LAG() function for accessing previous row values.
+
+---
+
+### Question 10: FIRST_VALUE and LAST_VALUE
+**Problem:** For each product, show the first and last sale prices within each month.
+
+```sql
+SELECT DISTINCT
+    product_id,
+    DATE_TRUNC('month', sale_date) as month,
+    FIRST_VALUE(amount) OVER (
+        PARTITION BY product_id, DATE_TRUNC('month', sale_date)
+        ORDER BY sale_date
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+    ) as first_sale_price,
+    LAST_VALUE(amount) OVER (
+        PARTITION BY product_id, DATE_TRUNC('month', sale_date)
+        ORDER BY sale_date
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+    ) as last_sale_price
+FROM sales
+ORDER BY product_id, month;
+```
+
+**Key Concept:** FIRST_VALUE() and LAST_VALUE() with proper frame specification.
+
+---
+
+## Combined Advanced Questions
+
+### Question 11: Top N per group with window functions
+**Problem:** Find the top 3 selling products in each category by total revenue.
+
+```sql
+WITH product_revenue AS (
+    SELECT 
+        p.product_id,
+        p.product_name,
+        p.category,
+        SUM(s.amount) as total_revenue,
+        RANK() OVER (PARTITION BY p.category ORDER BY SUM(s.amount) DESC) as revenue_rank
+    FROM sales s
+    JOIN products p ON s.product_id = p.product_id
+    GROUP BY p.product_id, p.product_name, p.category
+)
+SELECT 
+    category,
+    product_name,
+    total_revenue,
+    revenue_rank
+FROM product_revenue
+WHERE revenue_rank <= 3
+ORDER BY category, revenue_rank;
+```
+
+**Key Concept:** Combining GROUP BY with RANK() for top-N queries.
+
+---
+
+### Question 12: Cumulative distribution
+**Problem:** Calculate what percentage of total company sales each employee contributed, cumulatively ordered by their contribution.
+
+```sql
+WITH employee_sales AS (
+    SELECT 
+        e.employee_id,
+        e.name,
+        SUM(s.amount) as total_sales
+    FROM employees e
+    JOIN sales s ON e.employee_id = s.employee_id
+    GROUP BY e.employee_id, e.name
+)
+SELECT 
+    employee_id,
+    name,
+    total_sales,
+    ROUND(total_sales / SUM(total_sales) OVER () * 100, 2) as pct_of_total,
+    ROUND(SUM(total_sales) OVER (ORDER BY total_sales DESC 
+                                  ROWS UNBOUNDED PRECEDING) / 
+          SUM(total_sales) OVER () * 100, 2) as cumulative_pct
+FROM employee_sales
+ORDER BY total_sales DESC;
+```
+
+**Key Concept:** Multiple window functions with different frames for Pareto analysis.
+
+---
+
+### Question 13: Complex date-based aggregation
+**Problem:** Find customers who made purchases every quarter in the last year.
+
+```sql
+WITH quarterly_purchases AS (
+    SELECT 
+        customer_id,
+        EXTRACT(YEAR FROM order_date) as year,
+        EXTRACT(QUARTER FROM order_date) as quarter
+    FROM orders
+    WHERE order_date >= CURRENT_DATE - INTERVAL '1 year'
+    GROUP BY customer_id, EXTRACT(YEAR FROM order_date), EXTRACT(QUARTER FROM order_date)
+)
+SELECT 
+    customer_id,
+    COUNT(DISTINCT quarter) as quarters_active
+FROM quarterly_purchases
+GROUP BY customer_id
+HAVING COUNT(DISTINCT quarter) = 4;
+```
+
+**Key Concept:** Date functions with GROUP BY and HAVING for temporal patterns.
+
+---
+
+### Question 14: Median calculation
+**Problem:** Find the median salary for each department.
+
+```sql
+SELECT 
+    department_id,
+    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY salary) as median_salary
+FROM employees
+GROUP BY department_id;
+
+-- Alternative using window functions:
+WITH ranked_salaries AS (
+    SELECT 
+        department_id,
+        salary,
+        ROW_NUMBER() OVER (PARTITION BY department_id ORDER BY salary) as rn_asc,
+        ROW_NUMBER() OVER (PARTITION BY department_id ORDER BY salary DESC) as rn_desc
+    FROM employees
+)
+SELECT 
+    department_id,
+    AVG(salary) as median_salary
+FROM ranked_salaries
+WHERE ABS(rn_asc - rn_desc) <= 1
+GROUP BY department_id;
+```
+
+**Key Concept:** PERCENTILE_CONT() or clever use of ROW_NUMBER() for median.
+
+---
+
+### Question 15: Islands and gaps problem
+**Problem:** Find consecutive periods where employees had sales every day.
+
+```sql
+WITH daily_sales AS (
+    SELECT DISTINCT
+        employee_id,
+        DATE(sale_date) as sale_day
+    FROM sales
+),
+with_groups AS (
+    SELECT 
+        employee_id,
+        sale_day,
+        sale_day - (ROW_NUMBER() OVER (PARTITION BY employee_id ORDER BY sale_day) * INTERVAL '1 day') as grp
+    FROM daily_sales
+)
+SELECT 
+    employee_id,
+    MIN(sale_day) as streak_start,
+    MAX(sale_day) as streak_end,
+    COUNT(*) as consecutive_days
+FROM with_groups
+GROUP BY employee_id, grp
+HAVING COUNT(*) >= 5  -- At least 5 consecutive days
+ORDER BY employee_id, streak_start;
+```
+
+**Key Concept:** Islands and gaps pattern using ROW_NUMBER() arithmetic.
+
+---
+
+### Question 16: Self-join with aggregation
+**Problem:** Find pairs of employees who work in the same department and have a salary difference of less than $5000.
+
+```sql
+SELECT 
+    e1.name as employee1,
+    e2.name as employee2,
+    e1.department_id,
+    e1.salary as salary1,
+    e2.salary as salary2,
+    ABS(e1.salary - e2.salary) as salary_diff
+FROM employees e1
+JOIN employees e2 
+    ON e1.department_id = e2.department_id
+    AND e1.employee_id < e2.employee_id  -- Avoid duplicates and self-pairing
+WHERE ABS(e1.salary - e2.salary) < 5000
+ORDER BY e1.department_id, salary_diff;
+```
+
+**Key Concept:** Self-join with inequality conditions to avoid duplicates.
+
+---
+
+### Question 17: Complex window frame
+**Problem:** Calculate a centered moving average (2 days before, current day, 2 days after) for daily sales.
+
+```sql
+WITH daily_totals AS (
+    SELECT 
+        DATE(sale_date) as sale_day,
+        SUM(amount) as daily_total
+    FROM sales
+    GROUP BY DATE(sale_date)
+)
+SELECT 
+    sale_day,
+    daily_total,
+    AVG(daily_total) OVER (
+        ORDER BY sale_day
+        ROWS BETWEEN 2 PRECEDING AND 2 FOLLOWING
+    ) as centered_moving_avg_5day
+FROM daily_totals
+ORDER BY sale_day;
+```
+
+**Key Concept:** Custom window frames with PRECEDING and FOLLOWING.
+
+---
+
+### Question 18: Multiple grouping sets
+**Problem:** Get sales totals at multiple aggregation levels: by category, by month, and overall.
+
+```sql
+SELECT 
+    p.category,
+    DATE_TRUNC('month', s.sale_date) as month,
+    SUM(s.amount) as total_sales
+FROM sales s
+JOIN products p ON s.product_id = p.product_id
+GROUP BY GROUPING SETS (
+    (p.category, DATE_TRUNC('month', s.sale_date)),  -- By category and month
+    (p.category),                                     -- By category only
+    (DATE_TRUNC('month', s.sale_date)),              -- By month only
+    ()                                                -- Grand total
+)
+ORDER BY p.category, month;
+```
+
+**Key Concept:** GROUPING SETS for multiple aggregation levels in one query.
+
+---
+
+### Question 19: Correlated subquery with window function
+**Problem:** Find products whose current month sales exceed their 6-month average.
+
+```sql
+WITH monthly_product_sales AS (
+    SELECT 
+        product_id,
+        DATE_TRUNC('month', sale_date) as month,
+        SUM(amount) as monthly_sales,
+        AVG(SUM(amount)) OVER (
+            PARTITION BY product_id
+            ORDER BY DATE_TRUNC('month', sale_date)
+            ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+        ) as prev_6month_avg
+    FROM sales
+    GROUP BY product_id, DATE_TRUNC('month', sale_date)
+)
+SELECT 
+    product_id,
+    month,
+    monthly_sales,
+    prev_6month_avg,
+    ROUND((monthly_sales - prev_6month_avg) / prev_6month_avg * 100, 2) as pct_change
+FROM monthly_product_sales
+WHERE monthly_sales > prev_6month_avg
+ORDER BY pct_change DESC;
+```
+
+**Key Concept:** Excluding current row from window function calculation.
+
+---
+
+### Question 20: Dense rank with ties
+**Problem:** Rank products by sales, but give the same rank to products with identical sales.
+
+```sql
+SELECT 
+    p.product_name,
+    SUM(s.amount) as total_sales,
+    DENSE_RANK() OVER (ORDER BY SUM(s.amount) DESC) as sales_rank,
+    RANK() OVER (ORDER BY SUM(s.amount) DESC) as sales_rank_with_gaps
+FROM sales s
+JOIN products p ON s.product_id = p.product_id
+GROUP BY p.product_id, p.product_name
+ORDER BY sales_rank;
+```
+
+**Key Concept:** DENSE_RANK() vs RANK() for handling ties.
+
+---
+
+## Tips and Common Patterns
+
+### 1. Window Function Frame Types
+```sql
+-- ROWS: Physical rows
+ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+
+-- RANGE: Logical range (all rows with same ORDER BY value)
+RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+
+-- Default frame (varies by ORDER BY presence)
+-- With ORDER BY: RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+-- Without ORDER BY: ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+```
+
+### 2. Common Interview Patterns
+
+**Pattern: Top N per Group**
+```sql
+WITH ranked AS (
+    SELECT *, ROW_NUMBER() OVER (PARTITION BY group_col ORDER BY value_col DESC) as rn
+    FROM table
+)
+SELECT * FROM ranked WHERE rn <= N;
+```
+
+**Pattern: Running Total**
+```sql
+SELECT 
+    *,
+    SUM(amount) OVER (ORDER BY date ROWS UNBOUNDED PRECEDING) as running_total
+FROM table;
+```
+
+**Pattern: Year-over-Year Comparison**
+```sql
+SELECT 
+    year,
+    sales,
+    LAG(sales, 1) OVER (ORDER BY year) as prev_year_sales,
+    sales - LAG(sales, 1) OVER (ORDER BY year) as yoy_change
+FROM yearly_sales;
+```
+
+### 3. Optimization Tips
+
+- Use CTEs for readability, but watch for performance (some DBs don't optimize well)
+- Window functions are generally more efficient than self-joins
+- Index columns used in JOIN, WHERE, and ORDER BY clauses
+- Use EXPLAIN PLAN to understand query execution
+- Consider materialized views for complex, frequently-run queries
+
+### 4. Common Mistakes to Avoid
+
+- Forgetting to include all non-aggregated columns in GROUP BY
+- Using HAVING instead of WHERE (filter before aggregation when possible)
+- Not specifying frame bounds for LAST_VALUE (defaults can be counterintuitive)
+- Mixing window functions and regular aggregates incorrectly
+- Not handling NULL values in JOINs and aggregations
+
+### 5. Interview Strategy
+
+1. **Clarify requirements**: Ask about data volume, performance needs, edge cases
+2. **Think before coding**: Sketch out the logic, identify needed tables/joins
+3. **Start simple**: Build query incrementally, test each part
+4. **Explain your approach**: Talk through your reasoning
+5. **Consider alternatives**: Mention different approaches and trade-offs
+6. **Test edge cases**: NULL values, empty sets, duplicate data
+
+---
+
+## Practice Problems (Try These Yourself!)
+
+1. Find customers who haven't made a purchase in the last 90 days but were active before
+2. Calculate the retention rate month-over-month (% of customers who made purchases in consecutive months)
+3. Find products frequently bought together (market basket analysis)
+4. Identify employees who have higher salaries than their managers
+5. Calculate the median days between orders for each customer
+6. Find the longest streak of days with sales above $10,000
+7. Identify departments where more than 50% of employees earn above the company median
+8. Calculate the Nth percentile of order values for each product category
+
+Good luck with your interview! Remember: understanding the concepts is more important than memorizing syntax.
