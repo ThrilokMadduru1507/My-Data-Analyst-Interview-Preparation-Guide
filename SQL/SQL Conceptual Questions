@@ -1,0 +1,2150 @@
+# SQL Conceptual Interview Questions
+## Complete Guide for Technical Interviews
+
+---
+
+## Table of Contents
+1. [SQL Fundamentals](#sql-fundamentals)
+2. [JOIN Concepts](#join-concepts)
+3. [GROUP BY and Aggregation](#group-by-and-aggregation)
+4. [Window Functions](#window-functions)
+5. [Subqueries and CTEs](#subqueries-and-ctes)
+6. [Indexing and Performance](#indexing-and-performance)
+7. [Transaction and Concurrency](#transaction-and-concurrency)
+8. [Data Integrity and Constraints](#data-integrity-and-constraints)
+9. [Advanced Concepts](#advanced-concepts)
+10. [Scenario-Based Questions](#scenario-based-questions)
+
+---
+
+## SQL Fundamentals
+
+### Q1: What is the difference between WHERE and HAVING clauses?
+
+**Answer:**
+- **WHERE**: Filters rows BEFORE grouping/aggregation occurs. Cannot use aggregate functions.
+- **HAVING**: Filters groups AFTER grouping/aggregation occurs. Can use aggregate functions.
+
+**Example:**
+```sql
+-- WHERE filters individual rows
+SELECT department, COUNT(*) 
+FROM employees 
+WHERE salary > 50000  -- Filter before grouping
+GROUP BY department;
+
+-- HAVING filters grouped results
+SELECT department, COUNT(*) as emp_count
+FROM employees 
+GROUP BY department
+HAVING COUNT(*) > 10;  -- Filter after grouping
+```
+
+**Execution Order**: WHERE → GROUP BY → HAVING → SELECT → ORDER BY
+
+---
+
+### Q2: Explain the order of execution in a SQL query.
+
+**Answer:**
+The logical order of SQL query execution:
+
+1. **FROM** - Identify tables and perform joins
+2. **WHERE** - Filter individual rows
+3. **GROUP BY** - Group rows
+4. **HAVING** - Filter groups
+5. **SELECT** - Select columns (including aggregates)
+6. **DISTINCT** - Remove duplicates
+7. **ORDER BY** - Sort results
+8. **LIMIT/OFFSET** - Limit rows returned
+
+**Important Note**: Even though SELECT is written first, it's executed near the end. This is why you can't use column aliases from SELECT in WHERE clause, but you CAN use them in ORDER BY.
+
+```sql
+SELECT salary * 12 as annual_salary  -- 5. Executed
+FROM employees                        -- 1. Executed
+WHERE department = 'Sales'            -- 2. Executed
+ORDER BY annual_salary;               -- 7. Executed (alias available!)
+```
+
+---
+
+### Q3: What's the difference between UNION and UNION ALL?
+
+**Answer:**
+- **UNION**: Combines results and removes duplicates (implicit DISTINCT)
+- **UNION ALL**: Combines results and keeps all duplicates
+
+**Performance**: UNION ALL is faster because it doesn't perform duplicate elimination.
+
+**Requirements**: Both require:
+- Same number of columns
+- Compatible data types in corresponding columns
+- Column order matters
+
+```sql
+-- UNION removes duplicates
+SELECT name FROM employees_2023
+UNION
+SELECT name FROM employees_2024;
+
+-- UNION ALL keeps duplicates (faster)
+SELECT name FROM employees_2023
+UNION ALL
+SELECT name FROM employees_2024;
+```
+
+---
+
+### Q4: Difference between DELETE, TRUNCATE, and DROP?
+
+**Answer:**
+
+| Feature | DELETE | TRUNCATE | DROP |
+|---------|--------|----------|------|
+| **Type** | DML | DDL | DDL |
+| **Removes** | Rows (filtered) | All rows | Entire table |
+| **WHERE clause** | Yes | No | No |
+| **Rollback** | Yes (in transaction) | No (most DBs) | No |
+| **Triggers** | Fires | Doesn't fire | Doesn't fire |
+| **Speed** | Slower | Faster | Fastest |
+| **Identity reset** | No | Yes | Yes |
+| **Structure** | Kept | Kept | Removed |
+
+```sql
+DELETE FROM employees WHERE department = 'Sales';  -- Selective, can rollback
+TRUNCATE TABLE employees;                          -- All rows, can't rollback
+DROP TABLE employees;                              -- Table gone forever
+```
+
+---
+
+### Q5: What are NULL values and how do they behave?
+
+**Answer:**
+NULL represents "unknown" or "missing" data, not zero or empty string.
+
+**Key Behaviors:**
+- Any arithmetic operation with NULL returns NULL: `5 + NULL = NULL`
+- Comparisons with NULL return UNKNOWN (three-valued logic): `NULL = NULL` is not TRUE
+- Use `IS NULL` or `IS NOT NULL`, never `= NULL`
+- `COUNT(*)` includes NULLs, but `COUNT(column)` excludes them
+- NULLs are sorted first (ASC) or last (DESC) depending on database
+
+```sql
+-- Wrong
+SELECT * FROM employees WHERE manager_id = NULL;  -- Returns nothing!
+
+-- Correct
+SELECT * FROM employees WHERE manager_id IS NULL;
+
+-- NULL in aggregates
+SELECT AVG(bonus) FROM employees;  -- Ignores NULL bonuses
+```
+
+**NULL in JOINS:**
+- NULL values don't match in joins (NULL ≠ NULL)
+- Use COALESCE or IS NULL checks when needed
+
+---
+
+## JOIN Concepts
+
+### Q6: Explain different types of JOINs with examples.
+
+**Answer:**
+
+**1. INNER JOIN**: Returns only matching rows from both tables
+```sql
+SELECT e.name, d.department_name
+FROM employees e
+INNER JOIN departments d ON e.dept_id = d.dept_id;
+-- Only employees with valid department
+```
+
+**2. LEFT JOIN (LEFT OUTER JOIN)**: All rows from left table + matching from right
+```sql
+SELECT e.name, d.department_name
+FROM employees e
+LEFT JOIN departments d ON e.dept_id = d.dept_id;
+-- All employees, even without department (NULL for dept_name)
+```
+
+**3. RIGHT JOIN (RIGHT OUTER JOIN)**: All rows from right table + matching from left
+```sql
+SELECT e.name, d.department_name
+FROM employees e
+RIGHT JOIN departments d ON e.dept_id = d.dept_id;
+-- All departments, even without employees (NULL for employee names)
+```
+
+**4. FULL OUTER JOIN**: All rows from both tables
+```sql
+SELECT e.name, d.department_name
+FROM employees e
+FULL OUTER JOIN departments d ON e.dept_id = d.dept_id;
+-- All employees AND all departments
+```
+
+**5. CROSS JOIN**: Cartesian product (every row with every row)
+```sql
+SELECT e.name, d.department_name
+FROM employees e
+CROSS JOIN departments d;
+-- If 10 employees and 5 departments = 50 rows
+```
+
+**6. SELF JOIN**: Table joined with itself
+```sql
+SELECT e1.name as employee, e2.name as manager
+FROM employees e1
+JOIN employees e2 ON e1.manager_id = e2.employee_id;
+```
+
+---
+
+### Q7: What's the difference between INNER JOIN and WHERE clause with multiple tables?
+
+**Answer:**
+They can produce the same results, but have important differences:
+
+```sql
+-- INNER JOIN (recommended)
+SELECT * FROM employees e
+INNER JOIN departments d ON e.dept_id = d.dept_id;
+
+-- Comma-separated with WHERE (old style)
+SELECT * FROM employees e, departments d
+WHERE e.dept_id = d.dept_id;
+```
+
+**Differences:**
+1. **Readability**: JOIN syntax separates join logic from filter logic
+2. **OUTER JOINS**: Can't do LEFT/RIGHT/FULL joins with WHERE
+3. **Accidental Cartesian Product**: Forgetting WHERE creates huge result set
+4. **Modern Standard**: JOIN is SQL-92 standard, more maintainable
+
+**Best Practice**: Always use explicit JOIN syntax.
+
+---
+
+### Q8: What happens if you forget the ON clause in a JOIN?
+
+**Answer:**
+You get a **CROSS JOIN** (Cartesian product):
+- Every row from first table matched with every row from second table
+- If table A has 1000 rows and table B has 500 rows, result has 500,000 rows
+- Usually unintentional and causes performance issues
+
+```sql
+-- Missing ON clause
+SELECT * FROM employees e
+JOIN departments d;  -- CROSS JOIN! 
+
+-- Results in employees × departments rows
+```
+
+**In Production**: This can cause:
+- Query timeouts
+- Database locks
+- Massive memory consumption
+- Application crashes
+
+---
+
+### Q9: When would you use a LEFT JOIN vs INNER JOIN?
+
+**Answer:**
+
+**Use INNER JOIN when:**
+- You only want records that exist in both tables
+- Relationship is mandatory
+- Example: Get employees and their departments (assuming all employees must have departments)
+
+**Use LEFT JOIN when:**
+- You want all records from the main table regardless of matches
+- Relationship is optional
+- Finding missing relationships
+- Examples:
+  - All customers and their orders (including customers who never ordered)
+  - All products and sales (including products never sold)
+  - Finding orphaned records: `WHERE right_table.id IS NULL`
+
+```sql
+-- Find employees WITHOUT a department
+SELECT e.name
+FROM employees e
+LEFT JOIN departments d ON e.dept_id = d.dept_id
+WHERE d.dept_id IS NULL;
+```
+
+---
+
+### Q10: Explain the concept of join conditions vs filter conditions.
+
+**Answer:**
+
+**Join Condition (ON clause)**: Defines how tables relate
+**Filter Condition (WHERE clause)**: Filters the final result
+
+**For INNER JOIN**: ON and WHERE can be interchangeable (produces same result)
+**For OUTER JOIN**: They produce DIFFERENT results!
+
+```sql
+-- LEFT JOIN with filter in WHERE (wrong for keeping all left rows!)
+SELECT e.name, d.department_name
+FROM employees e
+LEFT JOIN departments d ON e.dept_id = d.dept_id
+WHERE d.location = 'NY';
+-- Becomes INNER JOIN! Filters out employees without departments
+
+-- LEFT JOIN with filter in ON (correct!)
+SELECT e.name, d.department_name
+FROM employees e
+LEFT JOIN departments d ON e.dept_id = d.dept_id AND d.location = 'NY';
+-- Keeps all employees, only matches NY departments
+```
+
+**Rule of Thumb**:
+- **ON**: How tables are related
+- **WHERE**: Filter the combined result
+
+---
+
+## GROUP BY and Aggregation
+
+### Q11: What are aggregate functions and how do they work?
+
+**Answer:**
+Aggregate functions perform calculations on a set of rows and return a single value.
+
+**Common Aggregate Functions:**
+- **COUNT()**: Number of rows
+- **SUM()**: Total of numeric values
+- **AVG()**: Average of numeric values
+- **MIN()**: Minimum value
+- **MAX()**: Maximum value
+- **STRING_AGG() / GROUP_CONCAT()**: Concatenate strings
+
+**Key Rules:**
+1. Cannot mix aggregates and non-aggregates in SELECT without GROUP BY
+2. All non-aggregated columns in SELECT must be in GROUP BY
+3. Aggregates ignore NULL values (except COUNT(*))
+
+```sql
+-- Error: name is not aggregated or grouped
+SELECT name, COUNT(*) FROM employees;
+
+-- Correct: group by name
+SELECT name, COUNT(*) FROM employees GROUP BY name;
+
+-- Or aggregate everything
+SELECT COUNT(*) FROM employees;
+```
+
+---
+
+### Q12: What's the difference between COUNT(*), COUNT(column), and COUNT(DISTINCT column)?
+
+**Answer:**
+
+- **COUNT(*)**: Counts all rows, including those with NULLs
+- **COUNT(column)**: Counts non-NULL values in that column
+- **COUNT(DISTINCT column)**: Counts unique non-NULL values
+
+```sql
+-- Example data:
+-- name     | department
+-- 'Alice'  | 'Sales'
+-- 'Bob'    | 'Sales'
+-- 'Charlie'| NULL
+-- 'David'  | 'Sales'
+
+SELECT COUNT(*) FROM employees;              -- 4 (all rows)
+SELECT COUNT(department) FROM employees;     -- 3 (excludes NULL)
+SELECT COUNT(DISTINCT department) FROM employees;  -- 1 ('Sales')
+```
+
+**Performance Note**: COUNT(*) is usually optimized and fastest. COUNT(DISTINCT) can be slow on large datasets.
+
+---
+
+### Q13: Can you use WHERE with aggregate functions?
+
+**Answer:**
+**No**, you must use **HAVING** instead.
+
+**Why?** Execution order:
+1. WHERE filters rows BEFORE grouping
+2. Aggregate functions execute DURING grouping
+3. You can't filter on something that doesn't exist yet
+
+```sql
+-- Wrong - aggregate in WHERE
+SELECT department, AVG(salary)
+FROM employees
+WHERE AVG(salary) > 50000  -- ERROR!
+GROUP BY department;
+
+-- Correct - use HAVING
+SELECT department, AVG(salary)
+FROM employees
+GROUP BY department
+HAVING AVG(salary) > 50000;
+
+-- Combine both
+SELECT department, AVG(salary)
+FROM employees
+WHERE hire_date > '2020-01-01'  -- Filter rows first
+GROUP BY department
+HAVING AVG(salary) > 50000;     -- Filter groups after
+```
+
+---
+
+### Q14: What happens if you use GROUP BY without aggregate functions?
+
+**Answer:**
+It works like **DISTINCT** - returns unique combinations of grouped columns.
+
+```sql
+SELECT department FROM employees GROUP BY department;
+-- Same as:
+SELECT DISTINCT department FROM employees;
+
+-- With multiple columns
+SELECT department, location FROM employees 
+GROUP BY department, location;
+-- Returns unique combinations
+```
+
+**However**: 
+- Using GROUP BY for this purpose is less clear than DISTINCT
+- GROUP BY is generally slower than DISTINCT for this use case
+- Best practice: Use DISTINCT when you just want unique values
+
+---
+
+### Q15: Explain GROUP BY with multiple columns.
+
+**Answer:**
+Groups by unique combinations of all specified columns.
+
+```sql
+SELECT department, location, COUNT(*)
+FROM employees
+GROUP BY department, location;
+
+-- Groups created for each unique combination:
+-- ('Sales', 'NY') -> 5 employees
+-- ('Sales', 'LA') -> 3 employees
+-- ('IT', 'NY') -> 7 employees
+-- ('IT', 'SF') -> 4 employees
+```
+
+**Important**:
+- Order of columns in GROUP BY doesn't affect result (but may affect performance)
+- All non-aggregated SELECT columns MUST be in GROUP BY
+- Can't select columns not in GROUP BY (unless aggregated)
+
+```sql
+-- Error: city not in GROUP BY
+SELECT department, city, COUNT(*)
+FROM employees
+GROUP BY department;
+
+-- Correct
+SELECT department, city, COUNT(*)
+FROM employees
+GROUP BY department, city;
+```
+
+---
+
+## Window Functions
+
+### Q16: What are window functions and how are they different from GROUP BY?
+
+**Answer:**
+
+**GROUP BY**: Collapses rows into groups, reducing result set
+**Window Functions**: Perform calculations across rows while keeping all rows
+
+```sql
+-- GROUP BY: 3 departments = 3 rows
+SELECT department, AVG(salary)
+FROM employees
+GROUP BY department;
+-- Result:
+-- Sales  | 60000
+-- IT     | 75000
+-- HR     | 55000
+
+-- Window Function: All employees retained
+SELECT name, department, salary,
+       AVG(salary) OVER (PARTITION BY department) as dept_avg
+FROM employees;
+-- Result:
+-- Alice  | Sales | 50000 | 60000
+-- Bob    | Sales | 70000 | 60000
+-- Charlie| IT    | 80000 | 75000
+-- David  | IT    | 70000 | 75000
+```
+
+**Key Differences:**
+- Window functions don't reduce rows
+- Can have both detail and aggregate in same row
+- Allow running calculations, rankings, comparisons
+
+---
+
+### Q17: Explain PARTITION BY and ORDER BY in window functions.
+
+**Answer:**
+
+**PARTITION BY**: Divides result set into partitions (like GROUP BY but doesn't collapse)
+**ORDER BY**: Defines order within each partition
+
+```sql
+SELECT 
+    name,
+    department,
+    salary,
+    -- Ranking within each department
+    RANK() OVER (PARTITION BY department ORDER BY salary DESC) as dept_rank,
+    -- Overall ranking
+    RANK() OVER (ORDER BY salary DESC) as overall_rank
+FROM employees;
+```
+
+**Without PARTITION BY**: Window applies to entire result set
+**Without ORDER BY**: Window includes all rows in partition (order-independent functions)
+
+---
+
+### Q18: What's the difference between ROW_NUMBER(), RANK(), and DENSE_RANK()?
+
+**Answer:**
+
+All assign rankings, but handle ties differently:
+
+```sql
+-- Sample data: salaries
+-- 100000
+-- 90000
+-- 90000  (tie)
+-- 80000
+-- 80000  (tie)
+-- 80000  (tie)
+-- 70000
+
+SELECT salary,
+    ROW_NUMBER() OVER (ORDER BY salary DESC) as row_num,
+    RANK() OVER (ORDER BY salary DESC) as rank,
+    DENSE_RANK() OVER (ORDER BY salary DESC) as dense_rank
+FROM employees;
+
+-- Results:
+-- salary | row_num | rank | dense_rank
+-- 100000 |    1    |  1   |     1
+-- 90000  |    2    |  2   |     2
+-- 90000  |    3    |  2   |     2      ← Ties
+-- 80000  |    4    |  4   |     3      ← Note the difference
+-- 80000  |    5    |  4   |     3
+-- 80000  |    6    |  4   |     3
+-- 70000  |    7    |  7   |     4
+```
+
+**ROW_NUMBER()**: Unique sequential number (1,2,3,4,5...)
+**RANK()**: Same rank for ties, skips next numbers (1,2,2,4,5...)
+**DENSE_RANK()**: Same rank for ties, no gaps (1,2,2,3,4...)
+
+**Use Cases:**
+- **ROW_NUMBER()**: Unique identifier, pagination
+- **RANK()**: Competition rankings (Olympic medals)
+- **DENSE_RANK()**: Category rankings, no gaps needed
+
+---
+
+### Q19: Explain LAG() and LEAD() functions.
+
+**Answer:**
+
+**LAG()**: Access previous row's value
+**LEAD()**: Access next row's value
+
+```sql
+SELECT 
+    date,
+    sales,
+    LAG(sales, 1) OVER (ORDER BY date) as prev_day_sales,
+    LEAD(sales, 1) OVER (ORDER BY date) as next_day_sales,
+    sales - LAG(sales, 1) OVER (ORDER BY date) as day_over_day_change
+FROM daily_sales;
+
+-- Result:
+-- date       | sales | prev_day | next_day | change
+-- 2024-01-01 | 1000  | NULL     | 1200     | NULL
+-- 2024-01-02 | 1200  | 1000     | 950      | 200
+-- 2024-01-03 | 950   | 1200     | NULL     | -250
+```
+
+**Syntax**: `LAG(column, offset, default_value)`
+- **offset**: How many rows back/forward (default: 1)
+- **default_value**: What to return when no row exists (default: NULL)
+
+**Common Use Cases:**
+- Calculate period-over-period changes
+- Find gaps in sequences
+- Compare current vs previous values
+
+---
+
+### Q20: What are window frames (ROWS vs RANGE)?
+
+**Answer:**
+
+Window frames define which rows to include in window calculation.
+
+**ROWS**: Physical row count
+**RANGE**: Logical value range
+
+```sql
+-- ROWS: Count 2 physical rows before current
+SELECT 
+    date,
+    amount,
+    SUM(amount) OVER (
+        ORDER BY date
+        ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+    ) as rolling_3day_sum
+FROM sales;
+
+-- RANGE: All rows with same date value
+SELECT 
+    date,
+    amount,
+    SUM(amount) OVER (
+        ORDER BY date
+        RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) as cumulative_sum
+FROM sales;
+```
+
+**Frame Specifications:**
+- `UNBOUNDED PRECEDING`: Start of partition
+- `UNBOUNDED FOLLOWING`: End of partition
+- `CURRENT ROW`: Current row
+- `N PRECEDING`: N rows before
+- `N FOLLOWING`: N rows after
+
+**Common Patterns:**
+```sql
+-- Running total
+ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+
+-- Centered moving average
+ROWS BETWEEN 2 PRECEDING AND 2 FOLLOWING
+
+-- All rows in partition
+ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+```
+
+---
+
+## Subqueries and CTEs
+
+### Q21: What's the difference between a subquery and a JOIN?
+
+**Answer:**
+
+**Subquery**: Query nested inside another query
+**JOIN**: Combines tables horizontally
+
+```sql
+-- Subquery
+SELECT name FROM employees
+WHERE department_id IN (SELECT dept_id FROM departments WHERE location = 'NY');
+
+-- JOIN (often more efficient)
+SELECT e.name 
+FROM employees e
+JOIN departments d ON e.department_id = d.dept_id
+WHERE d.location = 'NY';
+```
+
+**When to use Subquery:**
+- Result needs filtering by aggregate (IN, EXISTS)
+- Scalar value needed
+- Logically clearer for the use case
+
+**When to use JOIN:**
+- Need columns from multiple tables
+- Better performance (often)
+- More readable for complex queries
+
+**Performance**: Modern databases often optimize them similarly, but JOINs are typically faster.
+
+---
+
+### Q22: Explain correlated vs non-correlated subqueries.
+
+**Answer:**
+
+**Non-correlated**: Executes once, independent of outer query
+**Correlated**: Executes for each row of outer query (references outer query)
+
+```sql
+-- Non-correlated: Runs once
+SELECT name FROM employees
+WHERE salary > (SELECT AVG(salary) FROM employees);
+
+-- Correlated: Runs for EACH employee
+SELECT name, salary FROM employees e1
+WHERE salary > (
+    SELECT AVG(salary) 
+    FROM employees e2 
+    WHERE e2.department = e1.department  -- References outer query!
+);
+```
+
+**Performance:**
+- **Non-correlated**: Usually faster (runs once)
+- **Correlated**: Can be slow (runs N times)
+
+**Modern Alternative**: Window functions or JOINs often faster
+```sql
+-- Better alternative using window function
+SELECT name, salary
+FROM (
+    SELECT name, salary,
+           AVG(salary) OVER (PARTITION BY department) as dept_avg
+    FROM employees
+) sub
+WHERE salary > dept_avg;
+```
+
+---
+
+### Q23: What are CTEs (Common Table Expressions) and when should you use them?
+
+**Answer:**
+
+**CTE**: Named temporary result set that exists only within query execution.
+
+```sql
+WITH dept_stats AS (
+    SELECT department, AVG(salary) as avg_sal
+    FROM employees
+    GROUP BY department
+)
+SELECT e.name, e.salary, d.avg_sal
+FROM employees e
+JOIN dept_stats d ON e.department = d.department
+WHERE e.salary > d.avg_sal;
+```
+
+**Advantages:**
+1. **Readability**: Break complex queries into logical steps
+2. **Reusability**: Reference same subquery multiple times
+3. **Recursion**: Support recursive queries
+4. **Debugging**: Test each CTE independently
+
+**CTE vs Subquery:**
+- CTE can be referenced multiple times
+- CTE appears before main query (more readable)
+- Performance usually similar (both are typically materialized or inlined)
+
+**CTE vs Temp Table:**
+- CTE exists only for one query
+- Temp table persists in session
+- Temp table can have indexes
+- CTE is simpler for one-time use
+
+---
+
+### Q24: Explain recursive CTEs.
+
+**Answer:**
+
+Recursive CTEs call themselves to traverse hierarchical data.
+
+**Structure:**
+1. **Anchor member**: Base case (non-recursive)
+2. **UNION ALL**
+3. **Recursive member**: References CTE itself
+4. **Termination**: Eventually stops adding rows
+
+```sql
+-- Employee hierarchy (boss -> subordinate)
+WITH RECURSIVE org_chart AS (
+    -- Anchor: CEO (no manager)
+    SELECT employee_id, name, manager_id, 1 as level
+    FROM employees
+    WHERE manager_id IS NULL
+    
+    UNION ALL
+    
+    -- Recursive: employees reporting to previous level
+    SELECT e.employee_id, e.name, e.manager_id, oc.level + 1
+    FROM employees e
+    JOIN org_chart oc ON e.manager_id = oc.employee_id
+)
+SELECT * FROM org_chart ORDER BY level, name;
+```
+
+**Common Use Cases:**
+- Organizational hierarchies
+- Bill of materials
+- File systems
+- Graph traversal
+- Finding all descendants/ancestors
+
+**Important**: Always ensure termination condition to avoid infinite loops!
+
+---
+
+### Q25: What's the difference between EXISTS and IN?
+
+**Answer:**
+
+Both check for existence, but behave differently:
+
+```sql
+-- IN: Returns list of values
+SELECT name FROM employees
+WHERE department_id IN (SELECT dept_id FROM departments WHERE location = 'NY');
+
+-- EXISTS: Returns boolean (true/false)
+SELECT name FROM employees e
+WHERE EXISTS (
+    SELECT 1 FROM departments d 
+    WHERE d.dept_id = e.department_id AND d.location = 'NY'
+);
+```
+
+**Key Differences:**
+
+| Feature | IN | EXISTS |
+|---------|-----|--------|
+| **Returns** | List of values | Boolean |
+| **Correlation** | Usually non-correlated | Usually correlated |
+| **NULL handling** | Issues with NULLs | Handles NULLs well |
+| **Performance** | Good for small lists | Better for large sets |
+| **Short-circuit** | No | Yes (stops at first match) |
+
+**NULL Behavior:**
+```sql
+-- IN with NULL can give unexpected results
+SELECT * FROM table WHERE col IN (1, 2, NULL);  -- Excludes NULLs
+
+-- EXISTS handles NULLs better
+SELECT * FROM table WHERE EXISTS (SELECT 1 FROM other WHERE ...);
+```
+
+**Best Practice**: Use EXISTS for correlated subqueries, IN for small static lists.
+
+---
+
+## Indexing and Performance
+
+### Q26: What is an index and how does it improve performance?
+
+**Answer:**
+
+**Index**: Data structure that improves data retrieval speed (like a book index).
+
+**How it works:**
+- Creates separate structure with column values + pointers to rows
+- Allows database to find rows without scanning entire table
+- Trade-off: Faster reads, slower writes (index must be updated)
+
+**Types of Indexes:**
+
+1. **Clustered Index** (Primary Key):
+   - Determines physical row order
+   - One per table
+   - Actual data stored in index
+   
+2. **Non-clustered Index**:
+   - Separate structure with pointers
+   - Multiple allowed per table
+   
+3. **Unique Index**:
+   - Enforces uniqueness
+   
+4. **Composite Index**:
+   - Multiple columns
+   - Order matters!
+
+```sql
+-- Create index
+CREATE INDEX idx_employee_dept ON employees(department_id);
+
+-- Composite index
+CREATE INDEX idx_emp_dept_sal ON employees(department_id, salary);
+
+-- Unique index
+CREATE UNIQUE INDEX idx_emp_email ON employees(email);
+```
+
+**When to Index:**
+- Columns in WHERE clauses
+- JOIN columns
+- ORDER BY columns
+- Foreign keys
+
+**When NOT to Index:**
+- Small tables (full scan faster)
+- Columns with low cardinality (few unique values)
+- Frequently updated columns
+- Columns rarely used in queries
+
+---
+
+### Q27: What is a composite index and how does column order matter?
+
+**Answer:**
+
+**Composite Index**: Index on multiple columns.
+
+**Column Order is Critical**: Index can only be used left-to-right.
+
+```sql
+-- Index on (department_id, salary, hire_date)
+CREATE INDEX idx_composite ON employees(department_id, salary, hire_date);
+
+-- ✓ Uses index (leftmost column present)
+WHERE department_id = 10;
+
+-- ✓ Uses index (leftmost + next)
+WHERE department_id = 10 AND salary > 50000;
+
+-- ✓ Uses full index
+WHERE department_id = 10 AND salary > 50000 AND hire_date > '2020-01-01';
+
+-- ✗ Cannot use index (skips leftmost)
+WHERE salary > 50000;
+
+-- ✗ Cannot use index
+WHERE hire_date > '2020-01-01';
+
+-- ⚠ Partial use (only department_id, skips salary)
+WHERE department_id = 10 AND hire_date > '2020-01-01';
+```
+
+**Best Practice**: Most selective column first, most frequently queried first.
+
+---
+
+### Q28: Explain the difference between clustered and non-clustered indexes.
+
+**Answer:**
+
+**Clustered Index:**
+- Determines actual physical row order on disk
+- Table data IS the index (leaf nodes contain actual data)
+- Only ONE per table
+- Usually primary key
+- Faster for range queries and sorting
+
+**Non-clustered Index:**
+- Separate structure from table data
+- Leaf nodes contain pointers to actual data
+- Multiple allowed per table
+- Additional lookup required (bookmark lookup)
+
+**Analogy:**
+- **Clustered**: Dictionary (words arranged alphabetically)
+- **Non-clustered**: Book index (references page numbers)
+
+```sql
+-- Clustered (implicit with PRIMARY KEY)
+CREATE TABLE employees (
+    employee_id INT PRIMARY KEY,  -- Clustered index
+    name VARCHAR(100),
+    salary DECIMAL
+);
+
+-- Non-clustered
+CREATE INDEX idx_salary ON employees(salary);
+```
+
+**Performance Impact:**
+- Clustered: Faster for retrieving multiple rows
+- Non-clustered: Extra I/O for data lookup
+- Covering index: Non-clustered that includes all needed columns (no lookup needed)
+
+---
+
+### Q29: What is query execution plan and how do you analyze it?
+
+**Answer:**
+
+**Execution Plan**: Database's strategy for executing a query.
+
+**How to View:**
+```sql
+-- PostgreSQL
+EXPLAIN ANALYZE SELECT * FROM employees WHERE department_id = 10;
+
+-- MySQL
+EXPLAIN SELECT * FROM employees WHERE department_id = 10;
+
+-- SQL Server
+SET SHOWPLAN_ALL ON;
+```
+
+**Key Elements to Look For:**
+
+1. **Scan Types:**
+   - **Table Scan/Seq Scan**: Reads entire table (slow, no index)
+   - **Index Scan**: Reads entire index
+   - **Index Seek**: Uses index efficiently (good!)
+   - **Clustered Index Scan**: Reads all rows in order
+
+2. **Join Methods:**
+   - **Nested Loop**: Good for small datasets
+   - **Hash Join**: Good for large datasets
+   - **Merge Join**: Good for sorted data
+
+3. **Cost Metrics:**
+   - Estimated rows
+   - Actual rows (with ANALYZE)
+   - Execution time
+   - I/O cost
+
+**Red Flags:**
+- Table scans on large tables
+- High row estimates
+- Missing indexes
+- Implicit conversions
+- Sort operations
+
+---
+
+### Q30: What causes slow queries and how do you optimize them?
+
+**Answer:**
+
+**Common Causes:**
+
+1. **Missing Indexes**
+   ```sql
+   -- Slow: Full table scan
+   SELECT * FROM employees WHERE email = 'john@example.com';
+   
+   -- Fix: Add index
+   CREATE INDEX idx_email ON employees(email);
+   ```
+
+2. **SELECT * (Retrieving unnecessary columns)**
+   ```sql
+   -- Slow
+   SELECT * FROM employees;
+   
+   -- Better
+   SELECT employee_id, name FROM employees;
+   ```
+
+3. **Functions on Indexed Columns**
+   ```sql
+   -- Slow: Can't use index
+   WHERE YEAR(hire_date) = 2020;
+   
+   -- Better
+   WHERE hire_date >= '2020-01-01' AND hire_date < '2021-01-01';
+   ```
+
+4. **OR conditions (sometimes)**
+   ```sql
+   -- May not use indexes well
+   WHERE department = 'Sales' OR department = 'Marketing';
+   
+   -- Better
+   WHERE department IN ('Sales', 'Marketing');
+   ```
+
+5. **N+1 Query Problem**
+   ```sql
+   -- Slow: Multiple queries
+   SELECT * FROM employees;  -- Then for each:
+   SELECT * FROM departments WHERE id = employee.dept_id;
+   
+   -- Better: Single query with JOIN
+   SELECT e.*, d.* FROM employees e JOIN departments d ON e.dept_id = d.id;
+   ```
+
+6. **Correlated Subqueries**
+   ```sql
+   -- Slow: Runs for each row
+   SELECT * FROM employees e WHERE salary > (SELECT AVG(salary) FROM employees WHERE dept = e.dept);
+   
+   -- Better: JOIN or window function
+   WITH dept_avg AS (SELECT dept, AVG(salary) as avg_sal FROM employees GROUP BY dept)
+   SELECT e.* FROM employees e JOIN dept_avg d ON e.dept = d.dept WHERE e.salary > d.avg_sal;
+   ```
+
+**Optimization Steps:**
+1. Analyze execution plan
+2. Add appropriate indexes
+3. Rewrite inefficient queries
+4. Avoid SELECT *
+5. Use JOINs instead of multiple queries
+6. Consider partitioning for huge tables
+7. Update statistics
+
+---
+
+## Transaction and Concurrency
+
+### Q31: What are ACID properties?
+
+**Answer:**
+
+ACID ensures reliable database transactions:
+
+**A - Atomicity**: All or nothing
+- Transaction fully completes or fully rolls back
+- No partial updates
+- Example: Money transfer - both debit and credit must happen
+
+**C - Consistency**: Database goes from one valid state to another
+- All constraints, triggers, rules maintained
+- Example: After transfer, total money remains same
+
+**I - Isolation**: Concurrent transactions don't interfere
+- Transactions appear to execute sequentially
+- Prevents dirty reads, lost updates
+- Example: Two people withdrawing from same account
+
+**D - Durability**: Committed changes persist
+- Survives system crashes
+- Written to permanent storage
+- Example: After commit, transaction survives power loss
+
+```sql
+BEGIN TRANSACTION;
+    UPDATE accounts SET balance = balance - 100 WHERE account_id = 1;  -- Debit
+    UPDATE accounts SET balance = balance + 100 WHERE account_id = 2;  -- Credit
+COMMIT;  -- Both happen or neither happens
+```
+
+---
+
+### Q32: Explain transaction isolation levels.
+
+**Answer:**
+
+Control how concurrent transactions interact:
+
+**1. READ UNCOMMITTED** (Lowest isolation)
+- Can read uncommitted changes (dirty reads)
+- Phantom reads, non-repeatable reads possible
+- Fastest but least safe
+- Rarely used
+
+**2. READ COMMITTED** (Default in most DBs)
+- Only reads committed data
+- No dirty reads
+- Non-repeatable reads still possible
+- Good balance
+
+**3. REPEATABLE READ**
+- Same read returns same data
+- No dirty reads, no non-repeatable reads
+- Phantom reads still possible (new rows inserted)
+
+**4. SERIALIZABLE** (Highest isolation)
+- Complete isolation
+- No dirty, non-repeatable, or phantom reads
+- Slowest (lots of locking)
+- Like transactions run one at a time
+
+```sql
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+BEGIN TRANSACTION;
+-- Your queries
+COMMIT;
+```
+
+**Problems Prevented:**
+
+| Problem | Description | Prevented By |
+|---------|-------------|--------------|
+| **Dirty Read** | Read uncommitted data | READ COMMITTED+ |
+| **Non-repeatable Read** | Same query returns different data | REPEATABLE READ+ |
+| **Phantom Read** | New rows appear in range | SERIALIZABLE |
+| **Lost Update** | Concurrent updates overwrite | Locks/SERIALIZABLE |
+
+---
+
+### Q33: What's the difference between optimistic and pessimistic locking?
+
+**Answer:**
+
+**Pessimistic Locking**: Lock data before modifying
+- Prevents conflicts by blocking other transactions
+- Uses database locks (SELECT FOR UPDATE)
+- Good for high contention scenarios
+
+```sql
+BEGIN TRANSACTION;
+SELECT * FROM accounts WHERE account_id = 1 FOR UPDATE;  -- Lock row
+-- Do processing
+UPDATE accounts SET balance = balance - 100 WHERE account_id = 1;
+COMMIT;
+```
+
+**Optimistic Locking**: Check for conflicts before committing
+- Assumes conflicts are rare
+- Uses version numbers or timestamps
+- Retry if conflict detected
+- Better performance when conflicts rare
+
+```sql
+-- Add version column
+SELECT balance, version FROM accounts WHERE account_id = 1;
+-- version = 5
+
+-- Later, update only if version unchanged
+UPDATE accounts 
+SET balance = balance - 100, version = 6
+WHERE account_id = 1 AND version = 5;
+-- If 0 rows updated, someone else modified it - retry
+```
+
+**When to Use:**
+- **Pessimistic**: High contention, conflicts costly, short transactions
+- **Optimistic**: Low contention, conflicts rare, long-running transactions
+
+---
+
+### Q34: What are deadlocks and how do you prevent them?
+
+**Answer:**
+
+**Deadlock**: Two transactions waiting for each other's locks, neither can proceed.
+
+**Example:**
+```
+Transaction 1:              Transaction 2:
+Lock Table A                Lock Table B
+Wait for Table B            Wait for Table A
+↓ Deadlock! ↓
+```
+
+**Prevention Strategies:**
+
+1. **Lock in Same Order**
+   ```sql
+   -- Both transactions lock tables in same order
+   -- Trans 1 & 2: Lock A, then B
+   ```
+
+2. **Lock Timeout**
+   ```sql
+   SET LOCK_TIMEOUT 5000;  -- 5 seconds
+   ```
+
+3. **Keep Transactions Short**
+   - Minimize lock duration
+   - Don't do heavy processing while holding locks
+
+4. **Use Appropriate Isolation Level**
+   - Lower isolation = fewer locks
+   - Trade-off with consistency
+
+5. **Avoid User Interaction in Transactions**
+   - Don't wait for user input while holding locks
+
+**Database Response:**
+- Detects deadlock
+- Chooses victim transaction
+- Rolls it back automatically
+- Application should retry
+
+---
+
+## Data Integrity and Constraints
+
+### Q35: Explain different types of constraints.
+
+**Answer:**
+
+**1. PRIMARY KEY**: Unique identifier for each row
+```sql
+CREATE TABLE employees (
+    employee_id INT PRIMARY KEY,
+    name VARCHAR(100)
+);
+```
+- Enforces uniqueness
+- Cannot be NULL
+- One per table (can be composite)
+- Creates clustered index
+
+**2. FOREIGN KEY**: Enforces referential integrity
+```sql
+CREATE TABLE employees (
+    employee_id INT PRIMARY KEY,
+    department_id INT,
+    FOREIGN KEY (department_id) REFERENCES departments(dept_id)
+);
+```
+- Value must exist in referenced table (or be NULL)
+- Prevents orphaned records
+- Cascade options available
+
+**3. UNIQUE**: Ensures uniqueness (allows NULL)
+```sql
+email VARCHAR(100) UNIQUE
+```
+- Multiple allowed per table
+- Can be NULL (unless also NOT NULL)
+
+**4. NOT NULL**: Prohibits NULL values
+```sql
+name VARCHAR(100) NOT NULL
+```
+
+**5. CHECK**: Custom validation rule
+```sql
+salary DECIMAL CHECK (salary > 0),
+age INT CHECK (age >= 18 AND age <= 65)
+```
+
+**6. DEFAULT**: Default value when none provided
+```sql
+hire_date DATE DEFAULT CURRENT_DATE,
+status VARCHAR(20) DEFAULT 'Active'
+```
+
+---
+
+### Q36: What are CASCADE options in foreign keys?
+
+**Answer:**
+
+Control what happens when referenced row is deleted/updated:
+
+**Options:**
+
+1. **CASCADE**: Propagate change to child rows
+```sql
+FOREIGN KEY (dept_id) REFERENCES departments(dept_id)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+```
+- Delete department → delete all employees in it
+- Update dept_id → update all employee references
+
+2. **SET NULL**: Set foreign key to NULL
+```sql
+ON DELETE SET NULL
+ON UPDATE SET NULL
+```
+- Delete department → set employee dept_id to NULL
+
+3. **SET DEFAULT**: Set to default value
+```sql
+ON DELETE SET DEFAULT
+ON UPDATE SET DEFAULT
+```
+
+4. **RESTRICT/NO ACTION**: Prevent if child rows exist
+```sql
+ON DELETE RESTRICT
+ON UPDATE RESTRICT
+```
+- Cannot delete department with employees
+- Must delete employees first (default behavior)
+
+**Example:**
+```sql
+CREATE TABLE employees (
+    employee_id INT PRIMARY KEY,
+    department_id INT,
+    FOREIGN KEY (department_id) 
+        REFERENCES departments(dept_id)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE
+);
+```
+
+**Use Cases:**
+- **CASCADE**: Blog posts → comments (delete post deletes comments)
+- **SET NULL**: Employee → department (keep employee, remove dept)
+- **RESTRICT**: Customer → orders (can't delete customer with orders)
+
+---
+
+### Q37: What's the difference between TRUNCATE and DELETE with foreign keys?
+
+**Answer:**
+
+**DELETE**: DML operation, respects foreign keys
+```sql
+DELETE FROM departments WHERE dept_id = 10;
+-- Error if employees reference this department (with RESTRICT)
+-- Success if CASCADE configured (deletes employees too)
+```
+
+**TRUNCATE**: DDL operation, different behavior
+```sql
+TRUNCATE TABLE departments;
+-- Usually fails if foreign keys reference this table
+-- Requires CASCADE in some databases
+```
+
+**Key Differences:**
+
+| Feature | DELETE | TRUNCATE |
+|---------|--------|----------|
+| **Foreign Keys** | Respects them | Often fails if referenced |
+| **WHERE clause** | Yes | No (all rows) |
+| **Triggers** | Fires | Doesn't fire |
+| **Rollback** | Yes | No (in most cases) |
+| **Speed** | Slower | Much faster |
+
+**To TRUNCATE with FK:**
+```sql
+-- Option 1: Temporarily disable constraints
+SET FOREIGN_KEY_CHECKS=0;
+TRUNCATE TABLE departments;
+SET FOREIGN_KEY_CHECKS=1;
+
+-- Option 2: Drop and recreate
+ALTER TABLE employees DROP FOREIGN KEY fk_dept;
+TRUNCATE TABLE departments;
+ALTER TABLE employees ADD FOREIGN KEY (dept_id) REFERENCES departments(dept_id);
+```
+
+---
+
+## Advanced Concepts
+
+### Q38: What are materialized views and when should you use them?
+
+**Answer:**
+
+**Regular View**: Virtual table, executes query each time
+**Materialized View**: Stored result set, refreshed periodically
+
+```sql
+-- Regular view (no storage)
+CREATE VIEW employee_summary AS
+SELECT department, COUNT(*), AVG(salary)
+FROM employees
+GROUP BY department;
+
+-- Materialized view (stored)
+CREATE MATERIALIZED VIEW employee_summary_mv AS
+SELECT department, COUNT(*) as emp_count, AVG(salary) as avg_salary
+FROM employees
+GROUP BY department;
+
+-- Refresh materialized view
+REFRESH MATERIALIZED VIEW employee_summary_mv;
+```
+
+**Advantages:**
+- Fast queries (pre-computed)
+- Reduces load on source tables
+- Good for complex aggregations
+
+**Disadvantages:**
+- Takes storage space
+- Data can be stale
+- Refresh takes time
+- Maintenance overhead
+
+**When to Use:**
+- Complex queries run frequently
+- Data changes infrequently
+- Query performance critical
+- Acceptable staleness
+- Dashboard/reporting
+
+**Refresh Strategies:**
+- Manual refresh
+- Scheduled refresh (cron job)
+- Trigger-based refresh
+- Incremental refresh (if supported)
+
+---
+
+### Q39: Explain database normalization and its forms.
+
+**Answer:**
+
+**Normalization**: Organizing data to reduce redundancy and dependency.
+
+**1st Normal Form (1NF)**: Atomic values
+- No repeating groups
+- Each cell has single value
+- Each row unique
+
+```sql
+-- Not 1NF:
+CREATE TABLE employees (
+    id INT,
+    name VARCHAR(100),
+    phones VARCHAR(200)  -- '555-1234, 555-5678' ❌
+);
+
+-- 1NF:
+CREATE TABLE employees (
+    id INT,
+    name VARCHAR(100)
+);
+CREATE TABLE employee_phones (
+    employee_id INT,
+    phone VARCHAR(20)  -- One phone per row ✓
+);
+```
+
+**2nd Normal Form (2NF)**: 1NF + No partial dependencies
+- All non-key columns fully depend on entire primary key
+- Applies to composite keys
+
+```sql
+-- Not 2NF:
+CREATE TABLE order_items (
+    order_id INT,
+    product_id INT,
+    product_name VARCHAR(100),  -- Depends only on product_id ❌
+    quantity INT,
+    PRIMARY KEY (order_id, product_id)
+);
+
+-- 2NF: Move product_name to products table
+```
+
+**3rd Normal Form (3NF)**: 2NF + No transitive dependencies
+- Non-key columns don't depend on other non-key columns
+
+```sql
+-- Not 3NF:
+CREATE TABLE employees (
+    employee_id INT PRIMARY KEY,
+    department_id INT,
+    department_name VARCHAR(100)  -- Depends on department_id ❌
+);
+
+-- 3NF:
+CREATE TABLE employees (
+    employee_id INT PRIMARY KEY,
+    department_id INT
+);
+CREATE TABLE departments (
+    department_id INT PRIMARY KEY,
+    department_name VARCHAR(100)
+);
+```
+
+**BCNF (Boyce-Codd NF)**: 3NF + Every determinant is a candidate key
+
+**When to Denormalize:**
+- Read-heavy applications
+- Performance critical
+- Reduce joins
+- Data warehousing
+- Reporting tables
+
+---
+
+### Q40: What is partitioning and when should you use it?
+
+**Answer:**
+
+**Partitioning**: Dividing large table into smaller, manageable pieces.
+
+**Types:**
+
+**1. Range Partitioning**: Based on value ranges
+```sql
+CREATE TABLE sales (
+    sale_id INT,
+    sale_date DATE,
+    amount DECIMAL
+)
+PARTITION BY RANGE (YEAR(sale_date)) (
+    PARTITION p2022 VALUES LESS THAN (2023),
+    PARTITION p2023 VALUES LESS THAN (2024),
+    PARTITION p2024 VALUES LESS THAN (2025)
+);
+```
+
+**2. List Partitioning**: Based on discrete values
+```sql
+PARTITION BY LIST (region) (
+    PARTITION p_north VALUES IN ('NY', 'MA', 'CT'),
+    PARTITION p_south VALUES IN ('FL', 'GA', 'TX'),
+    PARTITION p_west VALUES IN ('CA', 'WA', 'OR')
+);
+```
+
+**3. Hash Partitioning**: Even distribution
+```sql
+PARTITION BY HASH (customer_id)
+PARTITIONS 10;
+```
+
+**4. Composite**: Combination
+```sql
+PARTITION BY RANGE (year)
+SUBPARTITION BY HASH (customer_id);
+```
+
+**Benefits:**
+- Faster queries (partition pruning)
+- Easier maintenance (drop old partitions)
+- Better manageability
+- Parallel query execution
+
+**When to Use:**
+- Tables > 2GB
+- Time-series data
+- Need to archive old data
+- Queries filter on partition key
+- Improve specific query performance
+
+**Best Practices:**
+- Partition on commonly queried columns
+- Keep number of partitions reasonable
+- Monitor query plans (partition pruning)
+
+---
+
+## Scenario-Based Questions
+
+### Q41: Design a database schema for an e-commerce system. What tables would you create and why?
+
+**Answer:**
+
+**Core Tables:**
+
+```sql
+-- Users
+CREATE TABLE users (
+    user_id INT PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Products
+CREATE TABLE products (
+    product_id INT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    category_id INT,
+    price DECIMAL(10,2) NOT NULL CHECK (price >= 0),
+    stock_quantity INT DEFAULT 0,
+    FOREIGN KEY (category_id) REFERENCES categories(category_id)
+);
+
+-- Categories
+CREATE TABLE categories (
+    category_id INT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    parent_category_id INT,
+    FOREIGN KEY (parent_category_id) REFERENCES categories(category_id)
+);
+
+-- Orders
+CREATE TABLE orders (
+    order_id INT PRIMARY KEY,
+    user_id INT NOT NULL,
+    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) DEFAULT 'pending',
+    total_amount DECIMAL(10,2),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+-- Order Items (Many-to-Many between Orders and Products)
+CREATE TABLE order_items (
+    order_item_id INT PRIMARY KEY,
+    order_id INT NOT NULL,
+    product_id INT NOT NULL,
+    quantity INT NOT NULL CHECK (quantity > 0),
+    price DECIMAL(10,2) NOT NULL,  -- Snapshot of price at order time
+    FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES products(product_id)
+);
+
+-- Addresses
+CREATE TABLE addresses (
+    address_id INT PRIMARY KEY,
+    user_id INT NOT NULL,
+    address_type VARCHAR(20),  -- 'shipping', 'billing'
+    street VARCHAR(255),
+    city VARCHAR(100),
+    state VARCHAR(50),
+    zip_code VARCHAR(20),
+    country VARCHAR(50),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- Reviews
+CREATE TABLE reviews (
+    review_id INT PRIMARY KEY,
+    product_id INT NOT NULL,
+    user_id INT NOT NULL,
+    rating INT CHECK (rating BETWEEN 1 AND 5),
+    comment TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (product_id) REFERENCES products(product_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    UNIQUE (product_id, user_id)  -- One review per product per user
+);
+```
+
+**Design Decisions:**
+
+1. **Order Items separate**: Snapshot price (historical accuracy)
+2. **Categories self-referencing**: Support subcategories
+3. **Addresses separate**: Users can have multiple addresses
+4. **Unique constraint on reviews**: Prevent duplicate reviews
+5. **ON DELETE CASCADE**: Remove order items when order deleted
+
+**Indexes to Create:**
+```sql
+CREATE INDEX idx_products_category ON products(category_id);
+CREATE INDEX idx_orders_user ON orders(user_id);
+CREATE INDEX idx_orders_date ON orders(order_date);
+CREATE INDEX idx_order_items_order ON order_items(order_id);
+CREATE INDEX idx_reviews_product ON reviews(product_id);
+```
+
+---
+
+### Q42: How would you find duplicate records in a table?
+
+**Answer:**
+
+**Multiple Approaches:**
+
+**1. Using GROUP BY and HAVING:**
+```sql
+-- Find duplicate emails
+SELECT email, COUNT(*) as count
+FROM users
+GROUP BY email
+HAVING COUNT(*) > 1;
+
+-- Get actual duplicate rows
+SELECT *
+FROM users
+WHERE email IN (
+    SELECT email
+    FROM users
+    GROUP BY email
+    HAVING COUNT(*) > 1
+);
+```
+
+**2. Using Window Functions:**
+```sql
+-- Mark duplicates
+SELECT *,
+    ROW_NUMBER() OVER (PARTITION BY email ORDER BY user_id) as rn
+FROM users;
+
+-- Keep only duplicates (rn > 1)
+WITH ranked AS (
+    SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY email ORDER BY user_id) as rn
+    FROM users
+)
+SELECT * FROM ranked WHERE rn > 1;
+```
+
+**3. Self-Join:**
+```sql
+SELECT DISTINCT u1.*
+FROM users u1
+JOIN users u2 
+    ON u1.email = u2.email 
+    AND u1.user_id > u2.user_id;
+```
+
+**4. Find duplicates across multiple columns:**
+```sql
+SELECT first_name, last_name, email, COUNT(*)
+FROM users
+GROUP BY first_name, last_name, email
+HAVING COUNT(*) > 1;
+```
+
+**To Delete Duplicates (Keep One):**
+```sql
+-- Using window function (PostgreSQL)
+DELETE FROM users
+WHERE user_id IN (
+    SELECT user_id
+    FROM (
+        SELECT user_id,
+            ROW_NUMBER() OVER (PARTITION BY email ORDER BY user_id) as rn
+        FROM users
+    ) sub
+    WHERE rn > 1
+);
+
+-- Using self-join
+DELETE u1
+FROM users u1
+JOIN users u2 
+    ON u1.email = u2.email 
+    AND u1.user_id > u2.user_id;
+```
+
+---
+
+### Q43: How do you handle slowly changing dimensions in a data warehouse?
+
+**Answer:**
+
+**Slowly Changing Dimension (SCD)**: Dimensions that change over time.
+
+**Type 1: Overwrite**
+- Simply update the record
+- No history kept
+```sql
+UPDATE customers
+SET address = '123 New St', city = 'Boston'
+WHERE customer_id = 1;
+```
+**Use When**: History not important (e.g., fixing typos)
+
+**Type 2: Add New Row (Most Common)**
+- Keep history with versioning
+```sql
+CREATE TABLE customers (
+    customer_key INT PRIMARY KEY,  -- Surrogate key
+    customer_id INT,                -- Natural key
+    name VARCHAR(100),
+    address VARCHAR(255),
+    city VARCHAR(100),
+    effective_date DATE,
+    expiry_date DATE,
+    is_current BOOLEAN
+);
+
+-- Insert new version
+INSERT INTO customers 
+VALUES (102, 1, 'John Doe', '123 New St', 'Boston', '2024-01-01', '9999-12-31', TRUE);
+
+-- Expire old version
+UPDATE customers
+SET expiry_date = '2023-12-31', is_current = FALSE
+WHERE customer_id = 1 AND is_current = TRUE;
+```
+**Use When**: Need full history
+
+**Type 3: Add New Column**
+- Track only current and previous
+```sql
+CREATE TABLE customers (
+    customer_id INT PRIMARY KEY,
+    name VARCHAR(100),
+    current_address VARCHAR(255),
+    previous_address VARCHAR(255),
+    address_change_date DATE
+);
+```
+**Use When**: Only need one level of history
+
+**Type 4: Add History Table**
+- Current in main table, history in separate table
+```sql
+CREATE TABLE customers (
+    customer_id INT PRIMARY KEY,
+    name VARCHAR(100),
+    address VARCHAR(255)
+);
+
+CREATE TABLE customer_history (
+    history_id INT PRIMARY KEY,
+    customer_id INT,
+    address VARCHAR(255),
+    changed_date DATE
+);
+```
+
+**Type 6 (Hybrid): Combination of 1, 2, 3**
+- Current, historical, and previous values
+
+---
+
+### Q44: Explain how you would optimize a query that joins 5 tables and takes too long.
+
+**Answer:**
+
+**Step-by-Step Optimization Process:**
+
+**1. Analyze Execution Plan**
+```sql
+EXPLAIN ANALYZE
+SELECT e.name, d.dept_name, p.project_name, c.city, s.salary_grade
+FROM employees e
+JOIN departments d ON e.dept_id = d.dept_id
+JOIN projects p ON e.project_id = p.project_id
+JOIN cities c ON d.city_id = c.city_id
+JOIN salary_grades s ON e.salary BETWEEN s.min_sal AND s.max_sal;
+```
+
+**2. Check for Missing Indexes**
+```sql
+-- Add indexes on JOIN columns
+CREATE INDEX idx_emp_dept ON employees(dept_id);
+CREATE INDEX idx_emp_project ON employees(project_id);
+CREATE INDEX idx_dept_city ON departments(city_id);
+
+-- For range joins (salary grades)
+CREATE INDEX idx_salary_range ON salary_grades(min_sal, max_sal);
+CREATE INDEX idx_emp_salary ON employees(salary);
+```
+
+**3. Filter Early (WHERE before JOIN)**
+```sql
+-- Bad: Join everything, then filter
+SELECT ...
+FROM employees e
+JOIN departments d ON e.dept_id = d.dept_id
+WHERE e.hire_date > '2020-01-01';
+
+-- Good: Filter first
+SELECT ...
+FROM employees e
+WHERE e.hire_date > '2020-01-01'  -- Fewer rows to join
+JOIN departments d ON e.dept_id = d.dept_id;
+```
+
+**4. Use CTEs to Pre-filter**
+```sql
+WITH recent_employees AS (
+    SELECT * FROM employees 
+    WHERE hire_date > '2020-01-01'
+),
+active_projects AS (
+    SELECT * FROM projects
+    WHERE status = 'Active'
+)
+SELECT e.name, p.project_name
+FROM recent_employees e
+JOIN active_projects p ON e.project_id = p.project_id;
+```
+
+**5. Avoid SELECT * **
+```sql
+-- Bad
+SELECT * FROM employees e JOIN departments d ...
+
+-- Good
+SELECT e.name, e.email, d.dept_name FROM employees e JOIN departments d ...
+```
+
+**6. Check Join Order**
+```sql
+-- Join smaller tables first, then larger
+-- Database usually optimizes this, but you can force with hints
+```
+
+**7. Consider Denormalization**
+```sql
+-- If joining same tables repeatedly, denormalize
+ALTER TABLE employees ADD COLUMN dept_name VARCHAR(100);
+-- Update via trigger or scheduled job
+```
+
+**8. Partition Large Tables**
+```sql
+-- Partition employees by hire year
+CREATE TABLE employees (
+    ...
+) PARTITION BY RANGE (YEAR(hire_date));
+```
+
+**9. Use Covering Indexes**
+```sql
+-- Include frequently selected columns in index
+CREATE INDEX idx_emp_covering 
+ON employees(dept_id) 
+INCLUDE (name, email, salary);
+```
+
+**10. Update Statistics**
+```sql
+ANALYZE TABLE employees;
+UPDATE STATISTICS employees;
+```
+
+---
+
+### Q45: How would you design a database to handle time-series data efficiently?
+
+**Answer:**
+
+**Requirements for Time-Series:**
+- High write throughput
+- Time-based queries
+- Data retention policies
+- Aggregation queries
+
+**Design Approach:**
+
+**1. Table Structure**
+```sql
+CREATE TABLE sensor_readings (
+    reading_id BIGINT PRIMARY KEY,
+    sensor_id INT NOT NULL,
+    timestamp TIMESTAMP NOT NULL,
+    temperature DECIMAL(5,2),
+    humidity DECIMAL(5,2),
+    pressure DECIMAL(6,2)
+);
+```
+
+**2. Partitioning by Time**
+```sql
+-- Monthly partitions
+CREATE TABLE sensor_readings (
+    ...
+) PARTITION BY RANGE (EXTRACT(EPOCH FROM timestamp)) (
+    PARTITION p_202401 VALUES LESS THAN (1706745600),  -- Feb 1, 2024
+    PARTITION p_202402 VALUES LESS THAN (1709251200),  -- Mar 1, 2024
+    ...
+);
+
+-- Automatic partition creation (stored procedure)
+-- Drop old partitions for data retention
+```
+
+**3. Indexing Strategy**
+```sql
+-- Composite index: sensor + time
+CREATE INDEX idx_sensor_time 
+ON sensor_readings(sensor_id, timestamp DESC);
+
+-- Time-only index for range queries
+CREATE INDEX idx_timestamp 
+ON sensor_readings(timestamp DESC);
+```
+
+**4. Aggregation Tables (Rollups)**
+```sql
+-- Hourly aggregates
+CREATE TABLE sensor_readings_hourly (
+    sensor_id INT,
+    hour TIMESTAMP,
+    avg_temperature DECIMAL(5,2),
+    min_temperature DECIMAL(5,2),
+    max_temperature DECIMAL(5,2),
+    reading_count INT,
+    PRIMARY KEY (sensor_id, hour)
+);
+
+-- Daily aggregates
+CREATE TABLE sensor_readings_daily (
+    sensor_id INT,
+    day DATE,
+    avg_temperature DECIMAL(5,2),
+    min_temperature DECIMAL(5,2),
+    max_temperature DECIMAL(5,2),
+    reading_count INT,
+    PRIMARY KEY (sensor_id, day)
+);
+
+-- Populate via scheduled job or trigger
+```
+
+**5. Data Retention Policy**
+```sql
+-- Keep raw data for 30 days
+-- Keep hourly aggregates for 1 year
+-- Keep daily aggregates forever
+
+-- Automated cleanup
+DELETE FROM sensor_readings 
+WHERE timestamp < CURRENT_DATE - INTERVAL '30 days';
+
+-- Or drop partitions
+ALTER TABLE sensor_readings DROP PARTITION p_202301;
+```
+
+**6. Query Optimization**
+```sql
+-- Use aggregated tables for older data
+SELECT 
+    CASE 
+        WHEN $date_range > 7 THEN 
+            (SELECT AVG(avg_temperature) FROM sensor_readings_daily WHERE ...)
+        WHEN $date_range > 1 THEN
+            (SELECT AVG(avg_temperature) FROM sensor_readings_hourly WHERE ...)
+        ELSE
+            (SELECT AVG(temperature) FROM sensor_readings WHERE ...)
+    END as avg_temp;
+```
+
+**7. Consider Specialized Databases**
+- TimescaleDB (PostgreSQL extension)
+- InfluxDB
+- Cassandra (for massive scale)
+
+**Best Practices:**
+- Write-optimized storage
+- Batch inserts when possible
+- Separate hot and cold storage
+- Compress historical data
+- Use columnar storage for analytics
+
+---
+
+## Quick Fire Questions
+
+**Q46: Can you have multiple NULL values in a UNIQUE column?**
+**A:** Yes! NULLs are considered distinct, so multiple NULLs allowed (except SQL Server with older versions).
+
+**Q47: What's faster: IN or EXISTS?**
+**A:** Typically EXISTS for large datasets (short-circuits), IN for small static lists.
+
+**Q48: Can you use GROUP BY without aggregate functions?**
+**A:** Yes, it works like DISTINCT but less efficient.
+
+**Q49: What's the difference between CHAR and VARCHAR?**
+**A:** CHAR is fixed-length (pads with spaces), VARCHAR is variable-length.
+
+**Q50: Can a foreign key reference a non-primary key?**
+**A:** Yes, but the column must be UNIQUE or part of a UNIQUE constraint.
+
+---
+
+## Interview Tips
+
+### Before the Interview:
+1. Practice writing queries by hand
+2. Understand execution order
+3. Know your database system specifics
+4. Review recent projects using SQL
+
+### During the Interview:
+1. **Clarify requirements** before writing queries
+2. **Think aloud** - explain your reasoning
+3. **Start simple** - get basic query working, then optimize
+4. **Consider edge cases** - NULL values, empty sets, duplicates
+5. **Discuss trade-offs** - performance vs readability vs maintainability
+
+### Common Mistakes to Avoid:
+- Forgetting WHERE before HAVING
+- Not handling NULLs properly
+- Using SELECT * unnecessarily
+- Forgetting to filter before joining
+- Not explaining your thought process
+
+---
+
+**Good luck with your SQL interview! Focus on understanding concepts deeply rather than memorizing syntax.**
